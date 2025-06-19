@@ -400,7 +400,7 @@ def menu():
             mostrar_submenu_cursos()
         elif opcion == '5':
             mostrar_submenu_servidores()
-        elif opcion= '7':
+        elif opcion == '7':
             mostrar_submenu_conexiones()
         elif opcion == '0':
             break
