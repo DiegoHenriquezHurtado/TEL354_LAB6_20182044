@@ -47,48 +47,7 @@ def importar_archivo(nombre_archivo):
         print(f"Error al leer el archivo YAML: {e}")
         return None
 
-def alumno_autorizado(codigo_alumno, servidor_nombre, servicio_nombre):
-    for curso in cursos:
-        if curso.estado != "DICTANDO":
-            continue
-        if codigo_alumno not in curso.alumnos:
-            continue
-        for srv in curso.servidores:
-            if srv['nombre'] == servidor_nombre and servicio_nombre in srv['servicios_permitidos']:
-                return True
-    return False
-
-def crear_conexion():
-    cod = input("Código del alumno: ")
-    nom_srv = input("Nombre del servidor: ")
-    nom_srvc = input("Nombre del servicio: ")
-
-    alumno = next((a for a in alumnos if a.codigo == cod), None)
-    servidor = next((s for s in servidores if s.nombre == nom_srv), None)
-
-    if not alumno or not servidor:
-        print("Alumno o servidor no encontrados.")
-        return
-
-    servicio = next((svc for svc in servidor.servicios if svc['nombre'] == nom_srvc), None)
-    if not servicio:
-        print("Servicio no encontrado.")
-        return
-
-    if not alumno_autorizado(alumno.codigo, servidor.nombre, servicio['nombre']):
-        print("Acceso denegado: alumno no está autorizado para este servicio.")
-        return
-
-    alumno_dpid, alumno_port = get_attachment_point(alumno.mac)
-    servidor_dpid, servidor_port = get_attachment_point_by_ip(servidor.ip)
-
-    if None in [alumno_dpid, alumno_port, servidor_dpid, servidor_port]:
-        print("No se pudo obtener los attachment points.")
-        return
-
-    route = get_route(alumno_dpid, alumno_port, servidor_dpid, servidor_port)
-    build_route(route, alumno.mac, servidor.ip, servicio['protocolo'], servicio['puerto'])
-
+#ALUMNOS
 def mostrar_submenu_alumno():
     while(True):
         print("------------------")
@@ -114,6 +73,46 @@ def listar_alumnos():
     for a in alumnos:
         print(f"{a.codigo} - {a.nombre} - {a.mac}")
 
+def crear_alumno():
+    print("\n--- Crear Alumno ---")
+    nombre = input("Nombre completo: ")
+    codigo = input("Codigo PUCP: ")
+    mac = input("Direccion MAC (ej. 00:44:11:22:33:44): ")
+
+    # Validar que no se repita
+    if any(a.codigo == codigo for a in alumnos):
+        print("Ya existe un alumno con ese codigo.")
+        return
+
+    nuevo = Alumno(nombre, codigo, mac)
+    alumnos.append(nuevo)
+    print(f"Alumno {nombre} agregado con exito.")
+
+# CURSOS
+def mostrar_submenu_cursos():
+    while(True):
+        print("--Submenu-cursos--")
+        print("1. Listar")
+        print("2. Mostrar Detalle")
+        print("3. Actualizar")
+        print("4. Listar Cursos que tiene acceso a SSH")
+        print("0. Volver")
+        opcion = input("Seleccione una opción: ")
+
+        if opcion == '1':
+            listar_cursos()
+        elif opcion == '2':
+            cod = input("Código de curso para ver detalles: ")
+            mostrar_detalle_curso(cod)
+        elif opcion == '3':
+            agregar_alumno_a_curso()
+            break
+        elif opcion == '4':
+            listar_cursos_con_ssh_en_servidor1()
+        elif opcion == '0':
+            break
+        else:
+            print("Opción no válida")
 
 def listar_cursos():
     for c in cursos:
@@ -164,47 +163,7 @@ def agregar_alumno_a_curso():
         curso.alumnos.append(codigo_alumno)
         print(f"Alumno {alumno.nombre} agregado al curso {curso.codigo} - {curso.nombre}.")
 
-
-def mostrar_submenu_cursos():
-    while(True):
-        print("--Submenu-cursos--")
-        print("1. Listar")
-        print("2. Mostrar Detalle")
-        print("3. Actualizar")
-        print("4. Listar Cursos que tiene acceso a SSH")
-        print("0. Volver")
-        opcion = input("Seleccione una opción: ")
-
-        if opcion == '1':
-            listar_cursos()
-        elif opcion == '2':
-            cod = input("Código de curso para ver detalles: ")
-            mostrar_detalle_curso(cod)
-        elif opcion == '3':
-            agregar_alumno_a_curso()
-            break
-        elif opcion == '4':
-            listar_cursos_con_ssh_en_servidor1()
-        elif opcion == '0':
-            break
-        else:
-            print("Opción no válida")
-
-def crear_alumno():
-    print("\n--- Crear Alumno ---")
-    nombre = input("Nombre completo: ")
-    codigo = input("Codigo PUCP: ")
-    mac = input("Direccion MAC (ej. 00:44:11:22:33:44): ")
-
-    # Validar que no se repita
-    if any(a.codigo == codigo for a in alumnos):
-        print("Ya existe un alumno con ese codigo.")
-        return
-
-    nuevo = Alumno(nombre, codigo, mac)
-    alumnos.append(nuevo)
-    print(f"Alumno {nombre} agregado con exito.")
-
+# SERVIDORES
 def mostrar_submenu_servidores():
     while(True):
         print("------------------")
@@ -224,7 +183,6 @@ def mostrar_submenu_servidores():
         else:
             print("Opción no válida")
 
-
 def listar_servidores():
     for s in servidores:
         print(f"{s.nombre} - IP: {s.ip}")
@@ -239,6 +197,7 @@ def mostrar_detalle_servidor(nombre_servidor):
     else:
         print("Dicho servidor no se encuentra en el archivo.yaml importado")
 
+# CONEXIONES
 def mostrar_submenu_conexiones():
     while(True):
         print("------------------")
@@ -250,20 +209,25 @@ def mostrar_submenu_conexiones():
         opcion = input("Seleccione una opción: ")
 
         if opcion == '1':
-            build_route()
+            handler = input("Ingrese un nombre identificador (handler) para la conexión: ")
+            alumno_mac = input("Ingrese la MAC del alumno (ej. 00:44:11:22:44:A7:2A): ")
+            servidor_ip = input("Ingrese la IP del servidor (ej. 10.0.0.3): ")
+            protocolo = input("Ingrese el protocolo (TCP o UDP): ").upper()
+            puerto = int(input("Ingrese el puerto del servicio (ej. 22 para SSH): "))
+
+            crear_conexion(handler, alumno_mac, servidor_ip, protocolo, puerto)
         elif opcion == '2':
-            #Listar
+            listar_conexiones()
             break
         elif opcion == '3':
-            #Borrar
+            handler = input("Ingrese el handler de la conexión a borrar: ")
+            borrar_conexion(handler)
             break
         elif opcion == '0':
             break
         else:
             print("Opción no válida")
 
-
-# Funciones pendientes: get_attachment_point, get_route, build_route
 def get_attachment_points(mac_address, controller_ip='192.168.200.200', controller_port=8080):
 
     url = f'http://{controller_ip}:{controller_port}/wm/device/'
@@ -327,55 +291,72 @@ def get_route(src_dpid, src_port, dst_dpid, dst_port, controller_ip="192.168.200
         print(f"Error al obtener la ruta: {e}")
         return []
 
-def build_route(route, alumno_mac, servidor_ip, protocolo, puerto):
-    protocolo_num = {'TCP': 6, 'UDP': 17}.get(protocolo.upper())
-    if protocolo_num is None:
-        print("Protocolo no soportado")
+def crear_conexion(handler, alumno_mac, servidor_ip, protocolo, puerto, controller_ip="192.168.200.200", controller_port=8080):
+    if handler in conexiones:
+        print(f"[ERROR] Ya existe una conexión con el handler '{handler}'.")
         return
 
-    for hop in route:
-        dpid = hop['switch']
-        in_port = hop['in_port']
-        out_port = hop['out_port']
+    print(f"[INFO] Obteniendo punto de conexión del alumno {alumno_mac}...")
+    dpid_alumno, port_alumno = get_attachment_points(alumno_mac, controller_ip, controller_port)
+    if not dpid_alumno:
+        print("[ERROR] No se pudo obtener el punto de conexión del alumno.")
+        return
 
-        # Flow de ida (alumno -> servidor)
-        flow = {
-            "switch": dpid,
-            "name": f"flow_{dpid}_{in_port}_to_srv",
-            "cookie": "0",
-            "priority": "32768",
-            "ingress-port": in_port,
-            "active": "true",
-            "eth_type": "0x0800",
-            "eth_src": alumno_mac,
-            "ipv4_dst": servidor_ip,
-            "ip_proto": protocolo_num,
-            "tp_dst": puerto,
-            "idle_timeout": 10,
-            "actions": f"output={out_port}"
-        }
-        requests.post(f"http://192.168.200.200:8080/wm/staticflowpusher/json", json=flow)
+    print(f"[INFO] Obteniendo punto de conexión del servidor {servidor_ip}...")
+    dpid_servidor, port_servidor = get_attachment_points(servidor_ip, controller_ip, controller_port)
+    if not dpid_servidor:
+        print("[ERROR] No se pudo obtener el punto de conexión del servidor.")
+        return
 
-        # Flow de retorno (servidor -> alumno)
-        reverse_flow = {
-            "switch": dpid,
-            "name": f"flow_{dpid}_{out_port}_to_alumno",
-            "cookie": "0",
-            "priority": "32768",
-            "ingress-port": out_port,
-            "active": "true",
-            "eth_type": "0x0800",
-            "ipv4_src": servidor_ip,
-            "eth_dst": alumno_mac,
-            "ip_proto": protocolo_num,
-            "tp_src": puerto,
-            "idle_timeout": 10,
-            "actions": f"output={in_port}"
-        }
-        requests.post(f"http://192.168.200.200:8080/wm/staticflowpusher/json", json=reverse_flow)
+    print("[INFO] Calculando la ruta...")
+    ruta = get_route(dpid_alumno, port_alumno, dpid_servidor, port_servidor, controller_ip, controller_port)
+    if not ruta:
+        print("[ERROR] No se pudo calcular la ruta entre el alumno y el servidor.")
+        return
 
-    print("Flujos instalados correctamente")
+    print("[INFO] Instalando la ruta en los switches...")
+    build_route(ruta, alumno_mac, servidor_ip, protocolo, puerto)
 
+    conexiones[handler] = {
+        "alumno_mac": alumno_mac,
+        "servidor_ip": servidor_ip,
+        "protocolo": protocolo,
+        "puerto": puerto,
+        "ruta": ruta
+    }
+
+    print(f"[OK] Conexión '{handler}' creada exitosamente.")
+
+def listar_conexiones():
+    if not conexiones:
+        print("[INFO] No hay conexiones creadas.")
+        return
+    for handler, info in conexiones.items():
+        print(f"- Handler: {handler}")
+        print(f"  MAC alumno: {info['alumno_mac']}")
+        print(f"  IP servidor: {info['servidor_ip']}")
+        print(f"  Protocolo: {info['protocolo']}")
+        print(f"  Puerto: {info['puerto']}")
+        print(f"  Ruta: {info['ruta']}")
+        print()
+
+def borrar_conexion(handler):
+    if handler not in conexiones:
+        print(f"[ERROR] No existe la conexión con handler '{handler}'.")
+        return
+
+    # Nota: Aquí también podrías eliminar los flows del controlador (extra)
+    del conexiones[handler]
+    print(f"[OK] Conexión '{handler}' eliminada.")
+
+def build_route(ruta, alumno_mac, servidor_ip, protocolo, puerto, controller_ip="192.168.200.200", controller_port=8080):
+    # Simulación de la instalación de flows (pendiente implementar POST real al controlador Floodlight)
+    print("[SIMULACIÓN] Instalando flows para ruta:")
+    for hop in ruta:
+        print(f"  Switch {hop['switch']} -> Puerto {hop['port']}")
+
+    # Aquí se puede usar una función `insert_flow()` por cada dirección (alumno->servidor y servidor->alumno),
+    # con los matches en MAC/IP/protocolo/puerto y también ARP.
 
 # Menú principal
 def menu():
