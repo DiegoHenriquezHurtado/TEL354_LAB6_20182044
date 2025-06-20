@@ -211,11 +211,11 @@ def mostrar_submenu_conexiones():
         if opcion == '1':
             handler = input("Ingrese un nombre identificador (handler) para la conexión: ")
             alumno_mac = input("Ingrese la MAC del alumno (ej. 00:44:11:22:44:A7:2A): ")
-            servidor_ip = input("Ingrese la IP del servidor (ej. 10.0.0.3): ")
+            servidor_mac = input("Ingrese la MAC del servidor (ej. 00:44:11:22:44:A7:2A): ")
             protocolo = input("Ingrese el protocolo (TCP o UDP): ").upper()
             puerto = int(input("Ingrese el puerto del servicio (ej. 22 para SSH): "))
 
-            crear_conexion(handler, alumno_mac, servidor_ip, protocolo, puerto)
+            crear_conexion(handler, alumno_mac, servidor_mac, protocolo, puerto)
         elif opcion == '2':
             listar_conexiones()
             break
@@ -228,7 +228,7 @@ def mostrar_submenu_conexiones():
         else:
             print("Opción no válida")
 
-def get_attachment_points(mac_address, controller_ip='192.168.200.200', controller_port=8080):
+def get_attachment_points(mac_address, controller_ip='127.0.0.1', controller_port=8080):
 
     url = f'http://{controller_ip}:{controller_port}/wm/device/'
 
@@ -269,7 +269,7 @@ def get_attachment_points(mac_address, controller_ip='192.168.200.200', controll
         print(f"Error al consultar la API: {e}")
         return None, None
 
-def get_route(src_dpid, src_port, dst_dpid, dst_port, controller_ip="192.168.200.200", port=8080):
+def get_route(src_dpid, src_port, dst_dpid, dst_port, controller_ip="127.0.0.1", port=8080):
 
     url = f"http://{controller_ip}:{port}/wm/topology/route/{src_dpid}/{src_port}/{dst_dpid}/{dst_port}/json"
 
@@ -291,7 +291,7 @@ def get_route(src_dpid, src_port, dst_dpid, dst_port, controller_ip="192.168.200
         print(f"Error al obtener la ruta: {e}")
         return []
 
-def crear_conexion(handler, alumno_mac, servidor_ip, protocolo, puerto, controller_ip="192.168.200.200", controller_port=8080):
+def crear_conexion(handler, alumno_mac, servidor_mac, protocolo, puerto, controller_ip="127.0.0.1", controller_port=8080):
     if handler in conexiones:
         print(f"[ERROR] Ya existe una conexión con el handler '{handler}'.")
         return
@@ -302,8 +302,8 @@ def crear_conexion(handler, alumno_mac, servidor_ip, protocolo, puerto, controll
         print("[ERROR] No se pudo obtener el punto de conexión del alumno.")
         return
 
-    print(f"[INFO] Obteniendo punto de conexión del servidor {servidor_ip}...")
-    dpid_servidor, port_servidor = get_attachment_points(servidor_ip, controller_ip, controller_port)
+    print(f"[INFO] Obteniendo punto de conexión del servidor {servidor_mac}...")
+    dpid_servidor, port_servidor = get_attachment_points(servidor_mac, controller_ip, controller_port)
     if not dpid_servidor:
         print("[ERROR] No se pudo obtener el punto de conexión del servidor.")
         return
@@ -315,11 +315,11 @@ def crear_conexion(handler, alumno_mac, servidor_ip, protocolo, puerto, controll
         return
 
     print("[INFO] Instalando la ruta en los switches...")
-    build_route(ruta, alumno_mac, servidor_ip, protocolo, puerto)
+    build_route(ruta, alumno_mac, servidor_mac, protocolo, puerto)
 
     conexiones[handler] = {
         "alumno_mac": alumno_mac,
-        "servidor_ip": servidor_ip,
+        "servidor_mac": servidor_mac,
         "protocolo": protocolo,
         "puerto": puerto,
         "ruta": ruta
@@ -340,23 +340,147 @@ def listar_conexiones():
         print(f"  Ruta: {info['ruta']}")
         print()
 
-def borrar_conexion(handler):
+def delete_flow(flow_name, controller_ip="127.0.0.1", controller_port=8080):
+    url = f"http://{controller_ip}:{controller_port}/wm/staticflowpusher/json"
+    try:
+        response = requests.delete(url, json={"name": flow_name})
+        response.raise_for_status()
+        print(f"[OK] Flow '{flow_name}' eliminado correctamente.")
+    except requests.RequestException as e:
+        print(f"[ERROR] No se pudo eliminar el flow '{flow_name}': {e}")
+
+def borrar_conexion(handler, controller_ip="127.0.0.1", controller_port=8080):
     if handler not in conexiones:
         print(f"[ERROR] No existe la conexión con handler '{handler}'.")
         return
 
-    # Nota: Aquí también podrías eliminar los flows del controlador (extra)
-    del conexiones[handler]
-    print(f"[OK] Conexión '{handler}' eliminada.")
+    conexion = conexiones[handler]
+    alumno_mac = conexion["alumno_mac"]
+    servidor_mac = conexion["servidor_mac"]
+    protocolo = conexion["protocolo"].upper()
+    puerto = conexion["puerto"]
+    ruta = conexion["ruta"]
 
-def build_route(ruta, alumno_mac, servidor_ip, protocolo, puerto, controller_ip="192.168.200.200", controller_port=8080):
-    # Simulación de la instalación de flows (pendiente implementar POST real al controlador Floodlight)
-    print("[SIMULACIÓN] Instalando flows para ruta:")
+    proto_number = {"TCP": 6, "UDP": 17}[protocolo]
+
+    # Eliminar flows instalados en cada switch
+    for i in range(len(ruta)-1):
+        hop = ruta[i]
+        dpid = hop["switch"]
+
+        # Flow alumno -> servidor
+        name1 = f"flow_{dpid}_{alumno_mac}_{servidor_mac}"
+        delete_flow(name1, controller_ip, controller_port)
+
+    for i in range(len(ruta)-1, 0, -1):
+        hop = ruta[i]
+        dpid = hop["switch"]
+
+        # Flow servidor -> alumno
+        name2 = f"flow_{dpid}_{servidor_mac}_{alumno_mac}"
+        delete_flow(name2, controller_ip, controller_port)
+
     for hop in ruta:
-        print(f"  Switch {hop['switch']} -> Puerto {hop['port']}")
+        dpid = hop["switch"]
 
-    # Aquí se puede usar una función `insert_flow()` por cada dirección (alumno->servidor y servidor->alumno),
-    # con los matches en MAC/IP/protocolo/puerto y también ARP.
+        # Flow ARP alumno -> servidor
+        arp_name1 = f"flow_{dpid}_{alumno_mac}_{servidor_mac}_ARP"
+        delete_flow(arp_name1, controller_ip, controller_port)
+
+        # Flow ARP servidor -> alumno
+        arp_name2 = f"flow_{dpid}_{servidor_mac}_{alumno_mac}_ARP"
+        delete_flow(arp_name2, controller_ip, controller_port)
+
+    # Finalmente eliminar del diccionario
+    del conexiones[handler]
+    print(f"[OK] Conexión '{handler}' eliminada completamente.")
+
+
+def insert_flow(dpid, match_fields, actions, priority=100, controller_ip='127.0.0.1', controller_port=8080):
+    url = f"http://{controller_ip}:{controller_port}/wm/staticflowpusher/json"
+    flow = {
+        "switch": dpid,
+        "name": f"flow_{dpid}_{match_fields.get('eth_src', 'any')}_{match_fields.get('eth_dst', 'any')}",
+        "priority": str(priority),
+        "active": "true",
+        "match": match_fields,
+        "actions": actions
+    }
+
+    try:
+        response = requests.post(url, json=flow)
+        response.raise_for_status()
+        print(f"[OK] Flow insertado en switch {dpid}")
+    except requests.RequestException as e:
+        print(f"[ERROR] No se pudo insertar flow en {dpid}: {e}")
+
+
+def build_route(ruta, alumno_mac, servidor_mac, protocolo, puerto, controller_ip="127.0.0.1", controller_port=8080):
+    protocolo = protocolo.upper()
+    if protocolo not in ["TCP", "UDP"]:
+        print("[ERROR] Protocolo no soportado.")
+        return
+
+    proto_number = {"TCP": 6, "UDP": 17}[protocolo]
+
+    # Reglas de alumno -> servidor
+    for i in range(len(ruta)-1):
+        actual = ruta[i]
+        siguiente = ruta[i+1]
+
+        dpid = actual['switch']
+        out_port = siguiente['port']
+
+        match_fields = {
+            "eth_type": "0x0800",  # IPv4
+            "eth_src": alumno_mac,
+            "eth_dst": servidor_mac,
+            "ip_proto": proto_number,
+            f"{protocolo.lower()}_dst": puerto
+        }
+
+        actions = f"output={out_port}"
+        insert_flow(dpid, match_fields, actions, controller_ip=controller_ip, controller_port=controller_port)
+
+    # Reglas de servidor -> alumno
+    for i in range(len(ruta)-1, 0, -1):
+        actual = ruta[i]
+        anterior = ruta[i-1]
+
+        dpid = actual['switch']
+        out_port = anterior['port']
+
+        match_fields = {
+            "eth_type": "0x0800",  # IPv4
+            "eth_src": servidor_mac,
+            "eth_dst": alumno_mac,
+            "ip_proto": proto_number,
+            f"{protocolo.lower()}_src": puerto
+        }
+
+        actions = f"output={out_port}"
+        insert_flow(dpid, match_fields, actions, controller_ip=controller_ip, controller_port=controller_port)
+
+    # Flujos para ARP (bidireccionales)
+    for hop in ruta:
+        dpid = hop['switch']
+        out_port = hop['port']
+        match_fields = {
+            "eth_type": "0x0806",  # ARP
+            "eth_src": alumno_mac,
+            "eth_dst": servidor_mac
+        }
+        insert_flow(dpid, match_fields, f"output={out_port}", priority=1, controller_ip=controller_ip, controller_port=controller_port)
+
+        match_fields = {
+            "eth_type": "0x0806",  # ARP
+            "eth_src": servidor_mac,
+            "eth_dst": alumno_mac
+        }
+        insert_flow(dpid, match_fields, f"output={out_port}", priority=1, controller_ip=controller_ip, controller_port=controller_port)
+
+    print("[OK] Rutas instaladas correctamente.")
+
 
 # Menú principal
 def menu():
